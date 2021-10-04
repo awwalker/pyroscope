@@ -111,15 +111,15 @@ func Cli(cfg *config.Exec, args []string) error {
 	defer u.Stop()
 
 	// The channel buffer capacity should be sufficient to be keep up with
-	// the expected signal rate (in case of Exec all the signals to be relayed
-	// to the child process)
+	// the expected signal rate
 	c := make(chan os.Signal, 10)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+
 	pid := cfg.Pid
 	var cmd *goexec.Cmd
 	if isExec {
 		// Note that we don't specify which signals to be sent: any signal to be
 		// relayed to the child process (including SIGINT and SIGTERM).
-		signal.Notify(c)
 		cmd = goexec.Command(args[0], args[1:]...)
 		cmd.Stderr = os.Stderr
 		cmd.Stdout = os.Stdout
@@ -131,9 +131,8 @@ func Cli(cfg *config.Exec, args []string) error {
 			return err
 		}
 		pid = cmd.Process.Pid
-	} else {
-		signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	}
+
 	defer func() {
 		signal.Stop(c)
 		close(c)
@@ -172,19 +171,13 @@ func Cli(cfg *config.Exec, args []string) error {
 	defer session.Stop()
 
 	if isExec {
-		return waitForSpawnedProcessToExit(c, cmd)
+		<-c
+		_ = sendSignal(cmd.Process, syscall.SIGTERM)
+		return nil
+	} else {
+		waitForProcessToExit(c, pid)
+		return nil
 	}
-	waitForProcessToExit(c, pid)
-	return nil
-}
-
-func waitForSpawnedProcessToExit(c chan os.Signal, cmd *goexec.Cmd) error {
-	go func() {
-		for s := range c {
-			_ = sendSignal(cmd.Process, s)
-		}
-	}()
-	return cmd.Wait()
 }
 
 func waitForProcessToExit(c chan os.Signal, pid int) {
